@@ -1,5 +1,6 @@
 import fitz  
 import os
+import re
 
 def extract_pdf(pdf_folder):
     output_txt_file = 'indian_laws_combined.txt'
@@ -25,3 +26,31 @@ def extract_pdf(pdf_folder):
 
 pdf_folder = 'data'
 extract_pdf(pdf_folder)
+
+
+def clean_document(text):
+    # First, remove special characters but keep essential punctuation and newlines
+    text = re.sub(r'[^\w\s\.\,\:\;\n]', '', text)
+    
+    # Split the text into lines, strip whitespace from each, and filter out empty lines
+    lines = text.split('\n')
+    non_empty_lines = [line.strip() for line in lines if line.strip()]
+    
+    # Join the non-empty lines back together with a single newline
+    text = '\n'.join(non_empty_lines)
+    
+    # Now, replace multiple spaces within lines with a single space
+    text = re.sub(r' +', ' ', text)
+    
+    return text.strip()
+
+# Read the text file
+with open('indian_laws_combined.txt', 'r', encoding='utf-8') as file:
+    raw_text = file.read()
+
+# Clean the text
+clean_text = clean_document(raw_text)
+
+# Print a sample
+print(clean_text[0:1000])
+
