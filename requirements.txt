@@ -1,6 +1,8 @@
-langchain
+streamlit
 faiss-cpu
+numpy
 sentence-transformers
+langchain
+google-generativeai
 python-dotenv
-requests
 PyMuPDF

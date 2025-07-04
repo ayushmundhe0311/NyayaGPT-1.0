@@ -1,17 +1,23 @@
-import fitz
 import os
 import re
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from sentence_transformers import SentenceTransformer
+import fitz
 import faiss
 import pickle
 import numpy as np
+from sentence_transformers import SentenceTransformer
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from dotenv import load_dotenv
-import requests
-
-# -----------------------------
-# Step 1: Extract Text from PDFs
-# -----------------------------
+import google.generativeai as genai
+"""
+ Text extraction from multiple legal documents:
+ - Code of Civil Procedure
+ - Code of Criminal Procedure
+ - Consumer Protection Act
+ - Indian Constitution
+ - Indian Penal Code
+ - Motor Vehicles Act
+ - Motor Vehicle Driving Regulations
+"""
 def extract_pdf(pdf_folder):
     output_txt_file = 'indian_laws_combined.txt'
     pdf_files = [f for f in os.listdir(pdf_folder) if f.endswith('.pdf')]
@@ -20,8 +26,6 @@ def extract_pdf(pdf_folder):
     with open(output_txt_file, 'w', encoding='utf-8') as output_file:
         for pdf_file in pdf_files:
             pdf_path = os.path.join(pdf_folder, pdf_file)
-            print(f'Reading {pdf_path}...')
-
             doc = fitz.open(pdf_path)
             for page in doc:
                 text = page.get_text()
@@ -29,20 +33,19 @@ def extract_pdf(pdf_folder):
                     output_file.write(text + '\n')
             doc.close()
 
-    print('✅ All PDFs successfully merged into indian_laws_combined.txt!')
+    print('All PDFs successfully merged into indian_laws_combined.txt!')
+    print(f"PDFs found: {pdf_files}")
 
-# -----------------------------
-# Step 2: Clean Text
-# -----------------------------
+
+# Cleaning and preprocessing of the gathered legal documents to ensure structured, noise-free, and analysis-ready text.
+
 def clean_document(text):
     text = re.sub(r'[^\w\s\.\,\:\;]', '', text)
     text = re.sub(r'\n\s*\n', '\n', text)
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
-# -----------------------------
-# Step 3: Chunking
-# -----------------------------
+# Chunking large corpus text into smaller segments suitable for LLM input size constraints.
 def chunk_text(clean_text):
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=8000,
@@ -52,9 +55,7 @@ def chunk_text(clean_text):
     chunks = text_splitter.split_text(clean_text)
     return chunks
 
-# -----------------------------
-# Step 4: Create Embeddings and Build FAISS
-# -----------------------------
+# Creating FAISS index for efficient similarity search and retrieval of document chunks.
 def create_faiss_index(chunks):
     model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
     embeddings = model.encode(chunks)
@@ -67,11 +68,9 @@ def create_faiss_index(chunks):
     with open("indian_laws_chunks.pkl", "wb") as f:
         pickle.dump(chunks, f)
 
-    print("✅ FAISS index and chunks saved!")
+    print("FAISS index and chunks saved!")
 
-# -----------------------------
-# Step 5: Search FAISS
-# -----------------------------
+# Searching and retrieving the top most similar document chunks based on the user query.
 def search_faiss(query, k=2):
     index = faiss.read_index("indian_laws_index.faiss")
     with open("indian_laws_chunks.pkl", "rb") as f:
@@ -86,85 +85,41 @@ def search_faiss(query, k=2):
         results.append(chunks[idx])
     return results
 
-# -----------------------------
-# Step 6: Gemini 1.5 Free API Call (Using gemini-1.5-flash)
-# -----------------------------
-import google.generativeai as genai
-import os
-from dotenv import load_dotenv
-
+# Making API call to Gemini to connect and interact with the Large Language Model (LLM).
 def query_gemini_api(prompt):
     load_dotenv()
-
-    API_KEY = os.getenv("GEMINI_API_KEY")  # Add your API key in .env file
+    API_KEY = os.getenv("GEMINI_API_KEY")
 
     genai.configure(api_key=API_KEY)
-
-    # Use free model
     model = genai.GenerativeModel('gemini-1.5-flash')
 
     try:
         response = model.generate_content(prompt)
-
         if response:
             return response.text
         else:
-            print("❌ No response from Gemini API.")
+            print(" No response from Gemini API.")
             return None
-
     except Exception as e:
-        print(f"❌ API Error: {e}")
+        print(f"API Error: {e}")
         return None
 
+# Defining the prompt to guide the LLM to generate responses based on the retrieved concepts and context.
 
-# -----------------------------
-# Step 7: Prompt Builder
-# -----------------------------
 def build_prompt(user_question, retrieved_context):
-    return f"""
-You are an experienced Indian lawyer who knows all the laws of India.
+    return f"Answer the following question based on the provided legal documents: {user_question}\n\nContext:\n{retrieved_context}\n\nAnswer:"
 
-You are provided with:
-- User’s Question: {user_question}
-- Retrieved Context from Legal Knowledge Base: {retrieved_context}
-
-Your task:
-- Answer the user’s question strictly based on the retrieved context.
-- Do not use any outside knowledge.
-- If the answer is not found in the context, politely say: "Based on the provided legal documents, the specific answer is not available."
-
-Answer:
-"""
-
-# -----------------------------
-# Execution
-# -----------------------------
-if __name__ == "__main__":
+# Checking for existing FAISS index or building a new one for efficient similarity search.
+def prepare_knowledge_base():
     if not os.path.exists("indian_laws_index.faiss"):
-        print("✅ Building FAISS Index...")
+        print("Building FAISS Index...")
         extract_pdf('data')
         with open('indian_laws_combined.txt', 'r', encoding='utf-8') as file:
             raw_text = file.read()
+
         clean_text = clean_document(raw_text)
         chunks = chunk_text(clean_text)
         create_faiss_index(chunks)
+        print("Knowledge base ready!")
     else:
-        print("✅ FAISS index already exists. Skipping index creation.")
-
-    user_question = input("\n💬 Enter your legal query: ")
-    faiss_results = search_faiss(user_question)
-    retrieved_context = "\n\n".join(faiss_results)
-
-    print("\n📂 Retrieved Context:\n")
-    print(retrieved_context)
-
-    final_prompt = build_prompt(user_question, retrieved_context)
-    gemini_response = query_gemini_api(final_prompt)
-
-    if gemini_response:
-        print("\n✅ NyayaGPT Response:\n")
-        print(gemini_response)
-    else:
-        print("\n❌ Failed to get response from API.")
-
-
+        print("FAISS index already exists. Skipping index creation.")
